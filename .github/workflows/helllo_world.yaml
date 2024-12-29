@@ -1,4 +1,4 @@
-name: First Github Workflow
+name: Auto Deploy in VPS after Push in Production
 
 on:
   push:
@@ -10,17 +10,61 @@ on:
   workflow_dispatch:
 
 jobs:
-  hello:
+  deploy:
+    name: Deploy project with Nginx
+    permissions:
+      deployments: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - name: hello world
-        run: echo "Hello Ahmed!!!"
-        shell: bash
+      - name: Checkout Repository
+        uses: 'actions/checkout@v2'
+        with:
+          ref: main
+          token: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
 
-  goodbye:
-    runs-on: ubuntu-latest
-    steps:
-      - name: goodbye world
-        run: echo "Goodby World!!!"
-        shell: bash
+      - name: Create GitHub deployment
+        uses: chrnorm/deployment-action@v2
+        id: deployment
+        with:
+          token: '${{ github.token }}'
+          environment-url: ${{ vars.MY_APP }}
+          environment: production
+
+      - name: Set up SSH Key and Deploy Odoo on Server
+        # run: |
+        uses: appleboy/ssh-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          port: 22
+          script: |
+            if [ -d ".git" ]; then
+              git fetch --all
+              git reset --hard origin/main
+              service odoo restart
+            else
+              echo "Git repository not found. Please initialize the repository first."
+              exit 1
+            fi
+
+      - name: Update deployment Status (success)
+        if: success()
+        uses: chrnorm/deployment-status@v2
+        with:
+          token: '${{ github.token }}'
+          environment-url: ${{ vars.MY_APP }}
+          state: 'success'
+          deployment-id: ${{ steps.deployment.outputs.deployment_id }}
+
+      - name: Update deployment status (failure)
+        if: failure()
+        uses: chrnorm/deployment-status@v2
+        with:
+          token: '${{ github.token }}'
+          environment-url: ${{ vars.MY_APP }}
+          state: 'failure'
+          deployment-id: ${{ steps.deployment.outputs.deployment_id }}
